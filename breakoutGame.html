@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>  
+    <meta charset="utf-8" />
+    <title>Gamedev Phaser Workshop - lesson 02: Scaling</title>
+    <style>* { padding: 0; margin: 0; }</style>
+    <script src="js/phaser.2.4.2.min.js"></script>
+</head>
+<body>
+<script>
+    var game = new Phaser.Game(480, 320, Phaser.AUTO, null, {preload: preload, create: create, update: update});
+    // document.getElementById('canvas')のようなもの
+    // （キャンバスの幅、　キャンバスの高さ
+    // The rendering method. The three options are AUTO, CANVAS and WEBGL. We can set one of the latter two explicitly or use AUTO to let Phaser decide which one to use. It usually uses WebGL if available in the browser, falling back to Canvas 2D if not.
+    // ）
+    var ball;
+    var paddle; 
+    var bricks;
+    var newBrick;
+    var brickInfo;
+    var scoreText;
+    var score = 0;
+    var lives = 3;
+    var livesText;
+    var lifeLostText;
+    var playing = false;
+    var startButton;
+
+    function preload() {
+        // アセットを読み込む 
+        game.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
+        game.scale.pageAlignHorizontally = true;
+        game.scale.pageAlignVertically = true;
+        game.stage.backgroundColor = '#eee';
+        game.load.image('ball', 'img/ball.png'); // 写真を読み込む
+                                                // jsのgetContextのようなもの 
+        game.load.image('paddle', 'img/paddle.png');    //  パドルの写真を読み込む
+        game.load.image('brick', 'img/brick.png');  // ブロックの写真を読み込む
+        game.load.spritesheet('ball', 'img/wobble.png', 20, 20); 　//　ボールのアニメーション画像を読み込み
+        game.load.spritesheet('button', 'img/button.png', 120, 40);     //　ボタンの画像を読み込み
+    }
+
+
+    function create() {
+        game.physics.startSystem(Phaser.Physics.ARCADE);    // 読み込んだアセットを描写する
+        game.physics.arcade.checkCollision.down = false;    // 下の壁は跳ね返らないようにする   
+        scoreText = game.add.text(15, 5, 'Points: 0', { font: '18px Arial', fill: '#0095dd'});　　//　scoreの詳細
+        livesText = game.add.text(game.world.width - 5, 5, 'Lives: ' + lives, {font: '18px Arial', fill: '#00095dd'});
+        livesText.anchor.set(1, 0);
+        lifeLostText = game.add.text(game.world.width / 2, game.world.height / 2, 'Life lost, click to continue', {font: '18px Arial', fill: '#00095dd'});
+        lifeLostText.anchor.set(0.5);
+        lifeLostText.visible = false;
+        startButton = game.add.button(game.world.width / 2, game.world.height / 2, 'button', startGame, this, 1, 0 ,2); // 
+        startButton.anchor.set(0.5);
+
+        drawBall();
+        drawPaddle();
+        initBricks();
+    }
+
+    function update() {
+        // 毎フレームごとに実行する
+        game.physics.arcade.collide(ball, paddle, ballHitPaddle);  // ボールとパドルが衝突するかを確認ß
+        game.physics.arcade.collide(ball, bricks, ballHitBrick);    // ボールとブロックが衝突した際にballHitBrick関数を呼び出す
+        if (playing) {
+            paddle.x = game.input.x || game.world.width * 0.5;  // x座標を読み取り、パドル操作に当てる
+        }
+    }
+
+    function drawBall() {
+        ball = game.add.sprite(game.world.width / 2, game.world.height - 50, 'ball');   // sprite　写真を合成する
+                                                                                        // (x座標、　y座標、　呼び出す変数)
+        ball.animations.add('wobble', [0,1,0,2,0,1,0,2,0], 10);     // (name, 表示するアニメーションの順番、フレームレート)
+        game.physics.enable(ball, Phaser.Physics.ARCADE);
+        ball.anchor.set(0.5); // ボールのアンカーを移動する
+        // ball.body.gravity.x = 100;  // 重力加速度を与える
+        // ball.body.gravity.y = 100;
+        ball.body.collideWorldBounds = true;    // 壁を検知しバウンドさせる
+        ball.checkWorldBounds = true;   // ボールが下辺に当たることを検知
+        ball.body.bounce.set(1); // バウンドする度にボールの速度を加速させる
+        // ball.events.onOutOfBounds.add(function(){　// ボールが下辺に当たった際のイベント
+        //     alert('GAME OVER');
+        //     location.reload();
+        // }, this);
+        ball.events.onOutOfBounds.add(ballLeaveScreen, this);
+    }
+
+    function drawPaddle() {
+        paddle = game.add.sprite(game.world.width / 2, game.world.height - 10, 'paddle');   // world.width = キャンバスの幅
+                                                                                            // world.height = キャンバスの高さ
+        game.physics.enable(paddle, Phaser.Physics.ARCADE);
+        paddle.anchor.set(0.5, 1);  // paddleの始点座標を移動する 
+        paddle.body.immovable = true;   // パドルがボールに当たっても落ちないようにする
+    }
+
+    function initBricks() {
+        brickInfo = {   // ブロックの情報
+            width: 50,
+            height: 20,
+            count: {　row: 3,　col: 7　},
+            offset: {　top: 50,　left: 60 },
+            padding: 10
+        };
+        bricks = game.add.group();  //　空の配列を作成
+        for(c = 0; c < brickInfo.count.col; c++) {
+            for(r = 0; r < brickInfo.count.row; r++) {
+                var brickX = (c*(brickInfo.width+brickInfo.padding))+brickInfo.offset.left;
+                var brickY = (r*(brickInfo.height+brickInfo.padding))+brickInfo.offset.top;
+                newBrick = game.add.sprite(brickX, brickY, 'brick');    //　ブロックを描写
+                game.physics.enable(newBrick, Phaser.Physics.ARCADE);  //   ブロックに物理演算を加える
+                newBrick.body.immovable = true;     //　ブロックを固定
+                newBrick.anchor.set(0.5);   //　ブロックのアンカー位置を調整
+                bricks.add(newBrick);   //　配列に加える
+            }
+        }
+    }
+
+    function ballHitBrick(ball, brick) {    // bricksの要素を渡している
+                                            // the first one is the ball, which we explicitly defined in the collide method, and the second one is the single brick from the bricks group that the ball is colliding with. 
+        ball.animations.play('wobble'); // ボールとブロックがヒットした際にアニメーション実行
+        var killTween = game.add.tween(brick.scale);
+        killTween.to({x:0,y:0}, 200, Phaser.Easing.Linear.None);
+        killTween.onComplete.addOnce(function(){
+            brick.kill();
+        }, this);
+        killTween.start();
+        score += 10;    // ブロックが消える度に変数scoreに+10
+        scoreText.setText('Points: ' + score);
+        if(score == brickInfo.count.row * brickInfo.count.col * 10){
+            alert('YOU WIN, CONGRATULATIONS!!');
+            location.reload();
+        }
+    }
+
+    function ballLeaveScreen() {
+        lives--;
+        if(lives) { 
+            livesText.setText('Lives: ' + lives);
+            lifeLostText.visible = true;
+            ball.reset(game.world.width / 2, game.world.height -25);
+            paddle.reset(game.world.width / 2, game.world.height - 5);
+            game.input.onDown.addOnce(function() {  // 画面をクリックした際に実行
+                                                    // addOnceメソッドは名前の通り、実行時に一度し実行できない。
+                lifeLostText.visible = false;
+                ball.body.velocity.set(150, -150);
+            }, this);
+        }
+        else {
+            alert('YOU LOST, GAME OVER!');
+            location.reload();
+        }
+    }
+
+    function ballHitPaddle(ball, paddle) {
+        ball.animations.play('wobble');     //　ボールのアニメーションを実行する
+        ball.body.velocity.x = -1 * 5 * (paddle.x - ball.x); //　ボールがパドルに衝突した際に、角度をボールに与える
+    }
+
+    function startGame() {
+        startButton.destroy(); 
+        ball.body.velocity.set(150, -150);　//　速度を与える
+        playing = true;
+    }
+</script>
+</body>
+</html>
